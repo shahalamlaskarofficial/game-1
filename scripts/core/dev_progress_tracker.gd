@@ -9,8 +9,8 @@ enum PhaseStatus {
 	COMPLETED,
 }
 
-const ACTIVE_PHASE_NUMBER: int = 3
-const ACTIVE_PHASE_PERCENT: int = 85 # Awaiting on-device Phase 3 QA sign-off
+const ACTIVE_PHASE_NUMBER: int = 5
+const ACTIVE_PHASE_PERCENT: int = 85 # Awaiting on-device Phase 5 QA sign-off
 
 var phases: Array[Dictionary] = [
 	{
@@ -31,22 +31,22 @@ var phases: Array[Dictionary] = [
 		"id": 3,
 		"short": "P3",
 		"title": "Atmosphere, Realism & Optimization",
-		"status": PhaseStatus.ACTIVE,
-		"percent": ACTIVE_PHASE_PERCENT,
+		"status": PhaseStatus.COMPLETED,
+		"percent": 100,
 	},
 	{
 		"id": 4,
 		"short": "P4",
-		"title": "Vehicle Physics & Traffic",
-		"status": PhaseStatus.PENDING,
-		"percent": 0,
+		"title": "Vehicle Physics & Barmer Traffic",
+		"status": PhaseStatus.COMPLETED,
+		"percent": 100,
 	},
 	{
 		"id": 5,
 		"short": "P5",
 		"title": "NPC Intelligence & Daily Routines",
-		"status": PhaseStatus.PENDING,
-		"percent": 0,
+		"status": PhaseStatus.ACTIVE,
+		"percent": ACTIVE_PHASE_PERCENT,
 	},
 	{
 		"id": 6,
