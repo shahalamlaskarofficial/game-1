@@ -1,11 +1,12 @@
 extends Node3D
 
-## Phase 2 Barmer World Bootstrap.
-## Initializes PBR procedural textures, Thar Desert lighting/sky, modular 256m chunk
-## streaming, Phase 1 interactive physics props, and an AAA district entry banner.
+## Phase 3 Barmer World Bootstrap.
+## Initializes RAM-optimized PBR textures, AtmosphereManager (24h cycle + weather + reflections),
+## real Barmer 256m chunk streaming, Phase 1 interactive physics props, and district banners.
 
 const BarmerMapDataScript = preload("res://scripts/world/barmer_map_data.gd")
 const MaterialLibraryScript = preload("res://scripts/world/material_library.gd")
+const AtmosphereManagerScript = preload("res://scripts/world/atmosphere_manager.gd")
 
 @onready var chunk_streamer: Node = $ChunkStreamer
 @onready var generated_world: Node3D = $GeneratedWorld
@@ -13,6 +14,7 @@ const MaterialLibraryScript = preload("res://scripts/world/material_library.gd")
 
 var map_data: RefCounted = null
 var material_lib: RefCounted = null
+var atmosphere: Node3D = null
 
 var _banner_control: Control = null
 var _banner_text: String = ""
@@ -25,11 +27,14 @@ func _ready() -> void:
 	material_lib = MaterialLibraryScript.new()
 	material_lib.build_all()
 
-	_build_environment_and_sun()
+	_build_environment_and_atmosphere()
 	_setup_district_banner()
 
 	chunk_streamer.district_entered.connect(_on_district_entered)
+	chunk_streamer.chunk_load_requested.connect(_on_chunk_count_changed)
+	chunk_streamer.chunk_unload_requested.connect(_on_chunk_count_changed)
 	chunk_streamer.initialize(generated_world, map_data, material_lib, Vector2i(0, 0))
+	GameManager.active_chunk_count = chunk_streamer.loaded_chunks.size()
 
 	_spawn_phase1_physics_props()
 
@@ -58,7 +63,11 @@ func _on_district_entered(district_name: String) -> void:
 		_banner_control.queue_redraw()
 
 
-func _build_environment_and_sun() -> void:
+func _on_chunk_count_changed(_coord: Vector2i) -> void:
+	GameManager.active_chunk_count = chunk_streamer.loaded_chunks.size()
+
+
+func _build_environment_and_atmosphere() -> void:
 	var sun := DirectionalLight3D.new()
 	sun.name = "BarmerSun"
 	sun.light_color = Color(1.0, 0.91, 0.76)
@@ -86,11 +95,11 @@ func _build_environment_and_sun() -> void:
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	env.ambient_light_energy = 0.68
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 1.06
+	env.tonemap_exposure = 1.05
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.87, 0.75, 0.58)
-	env.fog_density = 0.0018
-	env.fog_sky_affect = 0.32
+	env.fog_density = 0.0016
+	env.fog_sky_affect = 0.34
 
 	var world_env := WorldEnvironment.new()
 	world_env.name = "BarmerEnvironment"
@@ -99,9 +108,14 @@ func _build_environment_and_sun() -> void:
 
 	GameManager.register_environment(world_env, sun)
 
+	atmosphere = Node3D.new()
+	atmosphere.name = "AtmosphereManager"
+	atmosphere.set_script(AtmosphereManagerScript)
+	add_child(atmosphere)
+	atmosphere.initialize(sun, world_env, material_lib)
+
 
 func _spawn_phase1_physics_props() -> void:
-	# Preserves Phase 1 interactive RigidBody3D crates & fuel drums right near spawn
 	var wood_mat: StandardMaterial3D = material_lib.get_mat("sandstone_dark")
 	var drum_mat: StandardMaterial3D = material_lib.get_mat("metal_blue")
 
@@ -208,10 +222,10 @@ func _draw_district_banner() -> void:
 	var box_w: float = text_sz.x + pad_x * 2.0
 	var box_h: float = 34.0
 	var bx: float = (_banner_control.size.x - box_w) * 0.5
-	var by: float = 20.0
+	var by: float = 64.0
 	var rect := Rect2(bx, by, box_w, box_h)
 
-	_banner_control.draw_rect(rect, Color(0.07, 0.07, 0.08, 0.70), true)
+	_banner_control.draw_rect(rect, Color(0.07, 0.07, 0.08, 0.72), true)
 	_banner_control.draw_rect(Rect2(bx, by + box_h - 2.0, box_w, 2.0), Color(0.88, 0.62, 0.24, 0.95), true)
 	_banner_control.draw_string(
 		font,
