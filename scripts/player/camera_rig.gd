@@ -1,6 +1,6 @@
 extends Node3D
 
-## Collision-aware, smoothly damped 3rd-person camera rig.
+## Collision-aware, smoothly damped 3rd-person orbital & vehicle chase camera rig.
 
 @export var min_pitch_deg: float = -48.0
 @export var max_pitch_deg: float = 68.0
@@ -9,6 +9,7 @@ extends Node3D
 @export var sprint_fov: float = 79.0
 @export var crouch_spring_length: float = 3.5
 @export var stand_spring_length: float = 4.3
+@export var vehicle_spring_length: float = 6.5
 @export var bob_amplitude: float = 0.032
 @export var bob_frequency: float = 8.5
 
@@ -22,6 +23,9 @@ var current_pitch: float = -12.0
 
 var _bob_phase: float = 0.0
 var _base_spring_offset: Vector3 = Vector3(0.42, 0.08, 0.0)
+var _vehicle_spring_offset: Vector3 = Vector3(0.0, 0.45, 0.0)
+var _manual_orbit_cooldown: float = 0.0
+var _excluded_vehicle_rid: RID = RID()
 
 
 func _ready() -> void:
@@ -45,11 +49,33 @@ func _process(delta: float) -> void:
 	if look_delta.length_squared() > 0.00001:
 		target_yaw -= look_delta.x
 		target_pitch = clampf(target_pitch - look_delta.y, min_pitch_deg, max_pitch_deg)
+		_manual_orbit_cooldown = 1.65
+	elif _manual_orbit_cooldown > 0.0:
+		_manual_orbit_cooldown = maxf(0.0, _manual_orbit_cooldown - delta)
 
 	var blend: float = 1.0 - exp(-rotation_smoothing * delta)
 	current_yaw = lerpf(current_yaw, target_yaw, blend)
 	current_pitch = lerpf(current_pitch, target_pitch, blend)
 	_apply_rig_rotation()
+
+
+func attach_vehicle(vehicle: CollisionObject3D) -> void:
+	if _excluded_vehicle_rid.is_valid():
+		spring_arm.remove_excluded_object(_excluded_vehicle_rid)
+	_excluded_vehicle_rid = vehicle.get_rid()
+	spring_arm.add_excluded_object(_excluded_vehicle_rid)
+
+	# Align behind vehicle immediately on entry
+	var fwd: Vector3 = vehicle.global_transform.basis.z
+	target_yaw = rad_to_deg(atan2(-fwd.x, -fwd.z))
+	target_pitch = -15.0
+	_manual_orbit_cooldown = 0.0
+
+
+func detach_vehicle() -> void:
+	if _excluded_vehicle_rid.is_valid():
+		spring_arm.remove_excluded_object(_excluded_vehicle_rid)
+		_excluded_vehicle_rid = RID()
 
 
 func update_dynamic_effects(delta: float, horizontal_speed: float, max_sprint_speed: float, is_on_floor: bool, is_crouching: bool, is_sprinting: bool) -> void:
@@ -67,6 +93,27 @@ func update_dynamic_effects(delta: float, horizontal_speed: float, max_sprint_sp
 		spring_arm.position = spring_arm.position.lerp(_base_spring_offset + Vector3(bob_x, bob_y, 0.0), 1.0 - exp(-12.0 * delta))
 	else:
 		spring_arm.position = spring_arm.position.lerp(_base_spring_offset, 1.0 - exp(-8.0 * delta))
+
+
+func update_vehicle_chase(delta: float, vehicle: Node3D, speed_kmh: float, forward_speed_mps: float) -> void:
+	var speed_t: float = clampf(speed_kmh / 130.0, 0.0, 1.0)
+	var desired_fov: float = lerpf(72.0, 86.0, speed_t)
+	camera.fov = lerpf(camera.fov, desired_fov, 1.0 - exp(-6.0 * delta))
+
+	var desired_len: float = lerpf(vehicle_spring_length, vehicle_spring_length + 1.35, speed_t)
+	spring_arm.spring_length = lerpf(spring_arm.spring_length, desired_len, 1.0 - exp(-6.5 * delta))
+	spring_arm.position = spring_arm.position.lerp(_vehicle_spring_offset, 1.0 - exp(-8.0 * delta))
+
+	# Gently auto-follow vehicle heading while moving, unless player is actively orbiting camera
+	if _manual_orbit_cooldown <= 0.0 and speed_kmh > 4.5:
+		var fwd: Vector3 = vehicle.global_transform.basis.z
+		if forward_speed_mps < -2.0:
+			fwd = -fwd
+		var desired_rad: float = atan2(-fwd.x, -fwd.z)
+		var cur_rad: float = deg_to_rad(target_yaw)
+		var follow_blend: float = 1.0 - exp(-lerpf(2.2, 4.8, speed_t) * delta)
+		target_yaw = rad_to_deg(lerp_angle(cur_rad, desired_rad, follow_blend))
+		target_pitch = lerpf(target_pitch, -14.0, 1.0 - exp(-2.5 * delta))
 
 
 func get_camera_yaw_rad() -> float:
