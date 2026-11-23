@@ -1,7 +1,11 @@
 extends Node
 
-## Central game state, graphics profile orchestrator, and streaming telemetry hub.
+## Central game state, graphics profile orchestrator, streaming telemetry hub,
+## performance optimizer host, and development-status tracker.
 ## Loaded as Autoload: GameManager
+
+const DevProgressTrackerScript = preload("res://scripts/core/dev_progress_tracker.gd")
+const PerformanceOptimizerScript = preload("res://scripts/core/performance_optimizer.gd")
 
 enum GraphicsProfile {
 	LOW = 0,
@@ -25,13 +29,24 @@ const PROFILE_NAMES: Array[String] = ["LOW", "MEDIUM", "HIGH", "ULTRA"]
 var current_profile: GraphicsProfile = GraphicsProfile.MEDIUM
 var current_context: ControlContext = ControlContext.ON_FOOT
 var current_chunk: Vector2i = Vector2i.ZERO
+var active_chunk_count: int = 1
 var player_ref: CharacterBody3D = null
 var world_environment_ref: WorldEnvironment = null
 var sun_light_ref: DirectionalLight3D = null
+var atmosphere_ref: Node3D = null
 var hud_telemetry_visible: bool = true
+
+var dev_tracker: RefCounted = null
+var perf_optimizer: Node = null
 
 
 func _ready() -> void:
+	dev_tracker = DevProgressTrackerScript.new()
+	perf_optimizer = Node.new()
+	perf_optimizer.name = "PerformanceOptimizer"
+	perf_optimizer.set_script(PerformanceOptimizerScript)
+	add_child(perf_optimizer)
+
 	if OS.has_feature("android"):
 		apply_graphics_profile(GraphicsProfile.MEDIUM)
 	else:
@@ -46,6 +61,10 @@ func register_environment(world_env: WorldEnvironment, sun: DirectionalLight3D) 
 	world_environment_ref = world_env
 	sun_light_ref = sun
 	apply_graphics_profile(current_profile)
+
+
+func register_atmosphere(atmo: Node3D) -> void:
+	atmosphere_ref = atmo
 
 
 func set_current_chunk(chunk_coords: Vector2i) -> void:
@@ -65,57 +84,34 @@ func cycle_graphics_profile() -> void:
 	apply_graphics_profile(next_idx as GraphicsProfile)
 
 
+func cycle_time_of_day() -> void:
+	if atmosphere_ref != null and atmosphere_ref.has_method("cycle_time_preset"):
+		atmosphere_ref.cycle_time_preset()
+
+
+func cycle_weather() -> void:
+	if atmosphere_ref != null and atmosphere_ref.has_method("cycle_weather"):
+		atmosphere_ref.cycle_weather()
+
+
 func get_profile_name() -> String:
 	return PROFILE_NAMES[int(current_profile)]
 
 
+func get_time_display() -> String:
+	if atmosphere_ref != null and atmosphere_ref.has_method("get_formatted_time"):
+		return atmosphere_ref.get_formatted_time()
+	return "09:30"
+
+
+func get_weather_display() -> String:
+	if atmosphere_ref != null and atmosphere_ref.has_method("get_weather_name"):
+		return atmosphere_ref.get_weather_name()
+	return "CLEAR"
+
+
 func apply_graphics_profile(profile: GraphicsProfile) -> void:
 	current_profile = profile
-	var viewport: Viewport = get_viewport()
-
-	match profile:
-		GraphicsProfile.LOW:
-			viewport.scaling_3d_scale = 0.72
-			viewport.msaa_3d = Viewport.MSAA_DISABLED
-			if sun_light_ref:
-				sun_light_ref.shadow_enabled = true
-				sun_light_ref.directional_shadow_max_distance = 55.0
-				sun_light_ref.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-			if world_environment_ref and world_environment_ref.environment:
-				world_environment_ref.environment.fog_enabled = true
-				world_environment_ref.environment.glow_enabled = false
-
-		GraphicsProfile.MEDIUM:
-			viewport.scaling_3d_scale = 0.85
-			viewport.msaa_3d = Viewport.MSAA_2X
-			if sun_light_ref:
-				sun_light_ref.shadow_enabled = true
-				sun_light_ref.directional_shadow_max_distance = 110.0
-				sun_light_ref.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-			if world_environment_ref and world_environment_ref.environment:
-				world_environment_ref.environment.fog_enabled = true
-				world_environment_ref.environment.glow_enabled = false
-
-		GraphicsProfile.HIGH:
-			viewport.scaling_3d_scale = 1.0
-			viewport.msaa_3d = Viewport.MSAA_2X
-			if sun_light_ref:
-				sun_light_ref.shadow_enabled = true
-				sun_light_ref.directional_shadow_max_distance = 180.0
-				sun_light_ref.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-			if world_environment_ref and world_environment_ref.environment:
-				world_environment_ref.environment.fog_enabled = true
-				world_environment_ref.environment.glow_enabled = true
-
-		GraphicsProfile.ULTRA:
-			viewport.scaling_3d_scale = 1.0
-			viewport.msaa_3d = Viewport.MSAA_4X
-			if sun_light_ref:
-				sun_light_ref.shadow_enabled = true
-				sun_light_ref.directional_shadow_max_distance = 260.0
-				sun_light_ref.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-			if world_environment_ref and world_environment_ref.environment:
-				world_environment_ref.environment.fog_enabled = true
-				world_environment_ref.environment.glow_enabled = true
-
+	if perf_optimizer != null and perf_optimizer.has_method("apply_profile"):
+		perf_optimizer.apply_profile(int(profile), get_viewport(), sun_light_ref, world_environment_ref)
 	graphics_profile_changed.emit(current_profile)
