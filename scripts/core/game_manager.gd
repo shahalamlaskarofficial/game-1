@@ -1,7 +1,7 @@
 extends Node
 
 ## Central game state, graphics profile orchestrator, streaming telemetry hub,
-## performance optimizer host, and development-status tracker.
+## vehicle/traffic registry, performance optimizer host, and development-status tracker.
 ## Loaded as Autoload: GameManager
 
 const DevProgressTrackerScript = preload("res://scripts/core/dev_progress_tracker.gd")
@@ -30,7 +30,12 @@ var current_profile: GraphicsProfile = GraphicsProfile.MEDIUM
 var current_context: ControlContext = ControlContext.ON_FOOT
 var current_chunk: Vector2i = Vector2i.ZERO
 var active_chunk_count: int = 1
+var active_traffic_count: int = 0
+
 var player_ref: CharacterBody3D = null
+var current_vehicle: Node3D = null
+var nearby_vehicle: Node3D = null
+var traffic_manager_ref: Node3D = null
 var world_environment_ref: WorldEnvironment = null
 var sun_light_ref: DirectionalLight3D = null
 var atmosphere_ref: Node3D = null
@@ -65,6 +70,10 @@ func register_environment(world_env: WorldEnvironment, sun: DirectionalLight3D) 
 
 func register_atmosphere(atmo: Node3D) -> void:
 	atmosphere_ref = atmo
+
+
+func register_traffic_manager(tm: Node3D) -> void:
+	traffic_manager_ref = tm
 
 
 func set_current_chunk(chunk_coords: Vector2i) -> void:
