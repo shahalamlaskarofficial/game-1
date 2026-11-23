@@ -3,7 +3,7 @@ extends Node3D
 ## Pooled Barmer Traffic AI Manager (Authentic Indian Left-Hand Traffic).
 ## - Spawns 2 persistent ready-to-drive starter vehicles near the player spawn (Marwar 4x4 + Barmer Auto).
 ## - Manages a fixed pool of physics-driven VehicleBody3D traffic cars on NH-68 and NH-25.
-## - Uses throttled 10 Hz dual-raycast obstacle avoidance (yields to player, props, and traffic).
+## - Uses throttled 10 Hz dual-raycast obstacle avoidance (yields to player, NPCs, props, and traffic).
 ## - Safely verifies loaded chunks before spawning/recycling so vehicles never drop into void.
 
 const BarmerMapDataScript = preload("res://scripts/world/barmer_map_data.gd")
@@ -29,7 +29,7 @@ var map_data: RefCounted = null
 var chunk_streamer: Node = null
 
 var all_vehicles: Array[Node3D] = []
-var _ai_entries: Array[Dictionary] = [] # { "veh": VehicleBody3D, "lane": int, "target_kmh": float, "stuck_t": float, "ray_t": float, "obs_factor": float }
+var _ai_entries: Array[Dictionary] = []
 var _target_traffic_count: int = 6
 var _rng := RandomNumberGenerator.new()
 
@@ -64,7 +64,6 @@ func get_nearest_enterable_vehicle(world_pos: Vector3, max_dist: float = 4.6) ->
 
 
 func notify_vehicle_taken_by_player(veh: Node3D) -> void:
-	# Detach from AI recycling pool permanently if player hijacks an AI vehicle
 	for i: int in range(_ai_entries.size() - 1, -1, -1):
 		if _ai_entries[i]["veh"] == veh:
 			_ai_entries.remove_at(i)
@@ -87,7 +86,6 @@ func _physics_process(delta: float) -> void:
 		if veh.get("control_mode") != VehicleControllerScript.ControlMode.AI_TRAFFIC:
 			continue
 
-		# Recycle if too far, flipped, or approaching an unloaded chunk boundary
 		var dist_to_player: float = veh.global_position.distance_to(p_pos)
 		var is_flipped: bool = veh.global_transform.basis.y.y < 0.45
 		var lookahead_pos: Vector3 = veh.global_position + veh.global_transform.basis.z * 28.0
@@ -105,7 +103,6 @@ func _physics_process(delta: float) -> void:
 		else:
 			entry["stuck_t"] = 0.0
 
-		# Throttled 10 Hz forward obstacle detection
 		entry["ray_t"] = float(entry["ray_t"]) - delta
 		if float(entry["ray_t"]) <= 0.0:
 			entry["ray_t"] = 0.10
@@ -115,19 +112,16 @@ func _physics_process(delta: float) -> void:
 
 
 func _spawn_starter_vehicles() -> void:
-	# 1. Marwar 4x4 Desert SUV parked right along NH-68 shoulder beside player spawn
 	var suv := _create_vehicle_instance(
 		VehicleControllerScript.Archetype.SUV_4X4,
-		Color(0.76, 0.40, 0.18), # Thar Sunset Copper
+		Color(0.76, 0.40, 0.18),
 		VehicleControllerScript.ControlMode.PARKED
 	)
 	suv.name = "Starter_Marwar4x4"
-	# Face North (-Z) -> rotation_y = PI because VehicleBody3D forward is +Z
 	suv.global_transform = Transform3D(Basis(Vector3.UP, PI), Vector3(5.6, 0.55, 5.5))
 	add_child(suv)
 	all_vehicles.append(suv)
 
-	# 2. Iconic Green/Yellow Barmer Auto-Rickshaw parked beside the roadside Dhaba
 	var auto := _create_vehicle_instance(
 		VehicleControllerScript.Archetype.AUTO_RICKSHAW,
 		Color(0.14, 0.40, 0.22),
@@ -184,7 +178,6 @@ func _sync_traffic_pool_size() -> void:
 		_ai_entries.append(entry)
 		_recycle_ai_vehicle(entry, p_pos)
 
-	# Trim excess pool vehicles if user switches down to LOW graphics profile
 	while _ai_entries.size() > _target_traffic_count:
 		var removed: Dictionary = _ai_entries.pop_back()
 		var v: Node3D = removed["veh"]
@@ -218,16 +211,13 @@ func _drive_ai_step(entry: Dictionary, veh: VehicleBody3D) -> void:
 		return
 	to_target = to_target.normalized()
 
-	# Signed horizontal turn angle: positive = steer right (+1), negative = steer left (-1)
 	var cross_y: float = fwd.cross(to_target).y
 	var dot_v: float = clampf(fwd.dot(to_target), -1.0, 1.0)
 	var angle: float = atan2(cross_y, dot_v)
-	# VehicleController expects steer_in: -1 = left, +1 = right
 	var steer_cmd: float = clampf(-angle * 1.45, -1.0, 1.0)
 
 	var obs: float = float(entry["obs_factor"])
 	var desired_kmh: float = float(entry["target_kmh"])
-	# Slow gently for Ahinsa Circle roundabout curve
 	var circle_dist: float = Vector2(pos.x, pos.z).distance_to(BarmerMapDataScript.AHINSA_CIRCLE_POS)
 	if circle_dist < 26.0:
 		desired_kmh = minf(desired_kmh, 24.0)
@@ -259,10 +249,8 @@ func _compute_lane_lookahead(lane: int, pos: Vector3) -> Vector3:
 	var to_circle: Vector2 = pos_2d - circle
 	var dist_circle: float = to_circle.length()
 
-	# Smooth clockwise roundabout curve around Ahinsa Circle island (Indian LHT)
 	if dist_circle < 20.5:
 		var radial: Vector2 = to_circle.normalized() if dist_circle > 0.5 else Vector2(0.0, 1.0)
-		# Clockwise tangent in XZ (+X right, +Z down): (-radial.y, radial.x)
 		var cw_tangent := Vector2(-radial.y, radial.x)
 		var ring_pt: Vector2 = circle + radial * 12.2 + cw_tangent * 9.5
 		return Vector3(ring_pt.x, pos.y, ring_pt.y)
@@ -274,7 +262,7 @@ func _compute_lane_lookahead(lane: int, pos: Vector3) -> Vector3:
 			return Vector3(3.6, pos.y, pos.z + LOOK_DIST)
 		LaneId.NH25_EASTBOUND:
 			return Vector3(pos.x + LOOK_DIST, pos.y, BarmerMapDataScript.STATION_ROAD_Z - 2.8)
-		_: # NH25_WESTBOUND
+		_:
 			return Vector3(pos.x - LOOK_DIST, pos.y, BarmerMapDataScript.STATION_ROAD_Z + 2.8)
 
 
@@ -288,8 +276,8 @@ func _sense_forward_obstacle(veh: VehicleBody3D, space_state: PhysicsDirectSpace
 	for lat: float in [-0.65, 0.65]:
 		var start_p: Vector3 = origin_base + right * lat
 		var end_p: Vector3 = start_p + fwd * check_len
-		# Check Player (2) + Physics_Props (4) + Vehicles (8) = 14
-		var q := PhysicsRayQueryParameters3D.create(start_p, end_p, 14)
+		# Check Player (2) + Physics_Props (4) + Vehicles (8) + NPCs (16) = 30
+		var q := PhysicsRayQueryParameters3D.create(start_p, end_p, 30)
 		q.exclude = [veh.get_rid()]
 		var hit: Dictionary = space_state.intersect_ray(q)
 		if not hit.is_empty():
@@ -348,7 +336,7 @@ func _pick_lane_spawn(lane: int, player_pos: Vector3) -> Dictionary:
 			if absf(x) < 28.0:
 				x += 38.0
 			return {"pos": Vector3(x, 0.55, BarmerMapDataScript.STATION_ROAD_Z - 2.8), "yaw": PI * 0.5}
-		_: # NH25_WESTBOUND
+		_:
 			var x: float = clampf(player_pos.x + dist * sign_dir, -340.0, 340.0)
 			if absf(x) < 28.0:
 				x -= 38.0
