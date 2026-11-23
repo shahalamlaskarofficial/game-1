@@ -1,15 +1,20 @@
 extends Control
 
-## Sharp, vector-drawn multi-touch gameplay HUD for Android.
-## Supports simultaneous left floating stick, right free-look camera drag,
-## sprint-lock threshold, ergonomic action buttons, and live performance telemetry.
+## Phase 3 Multi-Touch Gameplay HUD + Integrated Development Progress Indicator.
+## - Preserves independent floating left stick, sprint-lock, right free-look camera drag,
+##   and ergonomic right-thumb action buttons.
+## - Adds a clean, matte AAA Development Progress Status Bar inside the debug/telemetry HUD
+##   showing active phase, honest phase completion %, completed phases, and 8-phase roadmap pips.
+## - Adds compact TIME and WX pills in the top-right bar for testing Day/Night and Weather live.
 
-const COLOR_BG := Color(0.07, 0.07, 0.08, 0.56)
-const COLOR_BORDER := Color(0.92, 0.89, 0.84, 0.42)
-const COLOR_ACCENT := Color(0.88, 0.62, 0.24, 0.95)
+const COLOR_BG := Color(0.07, 0.07, 0.08, 0.62)
+const COLOR_BG_DEEP := Color(0.04, 0.04, 0.05, 0.82)
+const COLOR_BORDER := Color(0.92, 0.89, 0.84, 0.36)
+const COLOR_ACCENT := Color(0.88, 0.62, 0.24, 0.96)
 const COLOR_ACCENT_SOFT := Color(0.88, 0.62, 0.24, 0.24)
-const COLOR_TEXT := Color(0.95, 0.93, 0.89, 0.94)
-const COLOR_TEXT_DIM := Color(0.76, 0.73, 0.68, 0.72)
+const COLOR_DONE := Color(0.36, 0.74, 0.48, 0.95)
+const COLOR_TEXT := Color(0.95, 0.93, 0.89, 0.95)
+const COLOR_TEXT_DIM := Color(0.74, 0.71, 0.66, 0.74)
 
 const STICK_RADIUS: float = 82.0
 const KNOB_RADIUS: float = 28.0
@@ -60,7 +65,6 @@ func _recompute_layout() -> void:
 	if _joystick_finger == -1:
 		_stick_origin = _stick_rest_center
 
-	# Ergonomic right-thumb arc
 	var base_x: float = w - maxf(122.0, w * 0.095)
 	var base_y: float = h - maxf(118.0, h * 0.185)
 
@@ -82,10 +86,12 @@ func _recompute_layout() -> void:
 		},
 	}
 
-	# Compact top-right utility pills (Graphics Profile & Telemetry Toggle)
+	# Compact right-aligned utility strip: [TIME] [WX] [GFX] [DEV]
 	_top_buttons = {
-		"profile": Rect2(w - 236.0, 18.0, 124.0, 34.0),
-		"hud": Rect2(w - 102.0, 18.0, 82.0, 34.0),
+		"time": Rect2(w - 422.0, 16.0, 88.0, 32.0),
+		"wx": Rect2(w - 326.0, 16.0, 108.0, 32.0),
+		"profile": Rect2(w - 210.0, 16.0, 118.0, 32.0),
+		"hud": Rect2(w - 84.0, 16.0, 68.0, 32.0),
 	}
 	queue_redraw()
 
@@ -101,7 +107,6 @@ func _handle_screen_touch(ev: InputEventScreenTouch) -> void:
 	var pos: Vector2 = ev.position
 
 	if ev.pressed:
-		# 1. Check top utility pills
 		for key: String in _top_buttons.keys():
 			var rect: Rect2 = _top_buttons[key]
 			if rect.has_point(pos):
@@ -110,10 +115,13 @@ func _handle_screen_touch(ev: InputEventScreenTouch) -> void:
 					GameManager.cycle_graphics_profile()
 				elif key == "hud":
 					GameManager.hud_telemetry_visible = not GameManager.hud_telemetry_visible
+				elif key == "time":
+					GameManager.cycle_time_of_day()
+				elif key == "wx":
+					GameManager.cycle_weather()
 				queue_redraw()
 				return
 
-		# 2. Check circular action triggers
 		for key: String in _buttons.keys():
 			var btn: Dictionary = _buttons[key]
 			if pos.distance_to(btn["center"]) <= float(btn["radius"]) + 10.0:
@@ -127,7 +135,6 @@ func _handle_screen_touch(ev: InputEventScreenTouch) -> void:
 				queue_redraw()
 				return
 
-		# 3. Left zone -> floating virtual joystick
 		if pos.x < size.x * 0.45 and _joystick_finger == -1:
 			_joystick_finger = ev.index
 			_stick_origin = Vector2(
@@ -140,7 +147,6 @@ func _handle_screen_touch(ev: InputEventScreenTouch) -> void:
 			queue_redraw()
 			return
 
-		# 4. Remaining screen -> free-look camera pad
 		if _look_finger == -1:
 			_look_finger = ev.index
 			return
@@ -183,7 +189,6 @@ func _handle_screen_drag(ev: InputEventScreenDrag) -> void:
 			var remapped: float = (norm_len - STICK_DEADZONE) / (1.0 - STICK_DEADZONE)
 			var move_vec: Vector2 = raw_offset.normalized() * remapped
 			InputRouter.set_touch_move(move_vec)
-			# Push firmly upward past outer ring to engage automatic sprint
 			_sprint_lock_active = (dist > STICK_RADIUS * 1.12 and move_vec.y < -0.68)
 
 		InputRouter.set_touch_sprint_stick_lock(_sprint_lock_active)
@@ -191,7 +196,6 @@ func _handle_screen_drag(ev: InputEventScreenDrag) -> void:
 		return
 
 	if ev.index == _look_finger:
-		# Subtle non-linear curve for fine aim + fast 180-degree turns
 		var mag: float = ev.relative.length()
 		var accel_boost: float = clampf(1.0 + (mag * 0.015), 1.0, 1.9)
 		InputRouter.add_look_delta(ev.relative * LOOK_SENSITIVITY * accel_boost)
@@ -203,7 +207,7 @@ func _draw() -> void:
 	_draw_stamina_bar()
 	_draw_top_utility_pills()
 	if GameManager.hud_telemetry_visible:
-		_draw_telemetry_panel()
+		_draw_dev_progress_and_telemetry()
 	_draw_center_reticle()
 
 
@@ -211,24 +215,20 @@ func _draw_joystick() -> void:
 	var active: bool = (_joystick_finger != -1)
 	var ring_col: Color = COLOR_ACCENT if _sprint_lock_active else (COLOR_TEXT if active else COLOR_BORDER)
 
-	# Outer matte track
 	draw_circle(_stick_origin, STICK_RADIUS, COLOR_BG)
 	draw_arc(_stick_origin, STICK_RADIUS, 0.0, TAU, 48, ring_col, 2.0, true)
 
-	# Directional crosshair ticks
 	var tick_inner: float = STICK_RADIUS - 10.0
 	var tick_outer: float = STICK_RADIUS - 3.0
 	for angle: float in [0.0, PI * 0.5, PI, PI * 1.5]:
 		var dir := Vector2(cos(angle), sin(angle))
 		draw_line(_stick_origin + dir * tick_inner, _stick_origin + dir * tick_outer, COLOR_BORDER, 1.5, true)
 
-	# Sprint-lock upper indicator
 	if active:
 		var lock_pos: Vector2 = _stick_origin + Vector2(0.0, -STICK_RADIUS - 18.0)
 		var lock_col: Color = COLOR_ACCENT if _sprint_lock_active else COLOR_TEXT_DIM
 		draw_string(_font, lock_pos + Vector2(-22.0, 4.0), "SPRINT", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, lock_col)
 
-	# Inner thumb knob
 	var knob_pos: Vector2 = _stick_origin + _stick_knob_offset
 	draw_circle(knob_pos, KNOB_RADIUS, COLOR_ACCENT_SOFT if active else Color(0.15, 0.15, 0.16, 0.7))
 	draw_arc(knob_pos, KNOB_RADIUS, 0.0, TAU, 32, COLOR_ACCENT if active else COLOR_BORDER, 2.2, true)
@@ -281,38 +281,83 @@ func _draw_stamina_bar() -> void:
 
 
 func _draw_top_utility_pills() -> void:
-	var profile_rect: Rect2 = _top_buttons["profile"]
-	draw_rect(profile_rect, COLOR_BG, true)
-	draw_rect(profile_rect, COLOR_BORDER, false, 1.4)
-	var prof_text: String = "GFX: " + GameManager.get_profile_name()
-	draw_string(_font, profile_rect.position + Vector2(12.0, 22.0), prof_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, COLOR_ACCENT)
-
-	var hud_rect: Rect2 = _top_buttons["hud"]
-	draw_rect(hud_rect, COLOR_BG, true)
-	draw_rect(hud_rect, COLOR_ACCENT if GameManager.hud_telemetry_visible else COLOR_BORDER, false, 1.4)
-	draw_string(_font, hud_rect.position + Vector2(14.0, 22.0), "TELEM", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, COLOR_TEXT)
+	_draw_pill(_top_buttons["time"], "T " + GameManager.get_time_display(), COLOR_TEXT, COLOR_BORDER)
+	_draw_pill(_top_buttons["wx"], GameManager.get_weather_display(), COLOR_ACCENT, COLOR_BORDER)
+	_draw_pill(_top_buttons["profile"], "GFX " + GameManager.get_profile_name(), COLOR_ACCENT, COLOR_BORDER)
+	_draw_pill(_top_buttons["hud"], "DEV", COLOR_TEXT, COLOR_ACCENT if GameManager.hud_telemetry_visible else COLOR_BORDER)
 
 
-func _draw_telemetry_panel() -> void:
-	var panel := Rect2(20.0, 18.0, 326.0, 74.0)
-	draw_rect(panel, COLOR_BG, true)
+func _draw_pill(rect: Rect2, label: String, txt_col: Color, border_col: Color) -> void:
+	draw_rect(rect, COLOR_BG, true)
+	draw_rect(rect, border_col, false, 1.3)
+	var sz: Vector2 = _font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
+	var tx: float = rect.position.x + (rect.size.x - sz.x) * 0.5
+	var ty: float = rect.position.y + 20.0
+	draw_string(_font, Vector2(tx, ty), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, txt_col)
+
+
+func _draw_dev_progress_and_telemetry() -> void:
+	var tracker: RefCounted = GameManager.dev_tracker
+	var panel := Rect2(18.0, 16.0, 368.0, 132.0)
+	draw_rect(panel, COLOR_BG_DEEP, true)
 	draw_rect(panel, COLOR_BORDER, false, 1.2)
-	# Sharp left amber accent stripe
 	draw_rect(Rect2(panel.position, Vector2(3.0, panel.size.y)), COLOR_ACCENT, true)
 
-	var line1: String = "BARMER SECTOR [PHASE 1]   |   %d FPS (%.1f ms)" % [_cached_fps, _cached_frame_ms]
-	var pos_str: String = "POS: --"
-	if GameManager.player_ref != null:
-		var p: Vector3 = GameManager.player_ref.global_position
-		pos_str = "POS: %.1f, %.1f, %.1f" % [p.x, p.y, p.z]
+	# --- Section 1: In-Game Development Progress Indicator ---
+	if tracker != null:
+		var active_p: Dictionary = tracker.get_active_phase()
+		var p_id: int = int(active_p["id"])
+		var p_pct: int = int(active_p["percent"])
+		var p_title: String = String(active_p["title"]).to_upper()
+		var done_str: String = tracker.get_completed_labels()
 
+		var header: String = "DEV STATUS  ·  PHASE %d ACTIVE (%d%%)" % [p_id, p_pct]
+		draw_string(_font, panel.position + Vector2(14.0, 20.0), header, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COLOR_ACCENT)
+		draw_string(_font, panel.position + Vector2(14.0, 36.0), p_title, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, COLOR_TEXT)
+
+		# Active phase progress bar
+		var bar_rect := Rect2(panel.position.x + 14.0, panel.position.y + 43.0, 338.0, 5.0)
+		draw_rect(bar_rect, Color(0.18, 0.18, 0.20, 0.9), true)
+		draw_rect(Rect2(bar_rect.position, Vector2(bar_rect.size.x * (float(p_pct) / 100.0), bar_rect.size.y)), COLOR_ACCENT, true)
+
+		# 8-Phase segmented milestone strip (P1..P8)
+		var pip_y: float = panel.position.y + 54.0
+		var pip_w: float = 38.0
+		var pip_gap: float = 4.8
+		var phases_list: Array = tracker.phases
+		for i: int in range(phases_list.size()):
+			var ph: Dictionary = phases_list[i]
+			var px: float = panel.position.x + 14.0 + float(i) * (pip_w + pip_gap)
+			var pip_rect := Rect2(px, pip_y, pip_w, 16.0)
+			var st: int = int(ph["status"])
+			var fill_c: Color = Color(0.14, 0.26, 0.18, 0.88) if st == 2 else (COLOR_ACCENT_SOFT if st == 1 else Color(0.12, 0.12, 0.14, 0.72))
+			var brd_c: Color = COLOR_DONE if st == 2 else (COLOR_ACCENT if st == 1 else Color(0.45, 0.43, 0.40, 0.35))
+			var lbl_c: Color = COLOR_DONE if st == 2 else (COLOR_ACCENT if st == 1 else COLOR_TEXT_DIM)
+
+			draw_rect(pip_rect, fill_c, true)
+			draw_rect(pip_rect, brd_c, false, 1.1)
+			var pip_txt: String = String(ph["short"]) + ("*" if st == 1 else "")
+			draw_string(_font, Vector2(px + 9.0, pip_y + 12.0), pip_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, lbl_c)
+
+		var done_line: String = "DONE: %s  |  OVERALL ROADMAP: %d%%" % [done_str, tracker.get_overall_percent()]
+		draw_string(_font, panel.position + Vector2(14.0, 84.0), done_line, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, COLOR_TEXT_DIM)
+
+	# Divider line
+	draw_line(
+		Vector2(panel.position.x + 12.0, panel.position.y + 92.0),
+		Vector2(panel.position.x + panel.size.x - 12.0, panel.position.y + 92.0),
+		Color(0.9, 0.87, 0.82, 0.18),
+		1.0
+	)
+
+	# --- Section 2: Real-Time Performance & Spatial Telemetry ---
+	var r_scale: float = GameManager.perf_optimizer.current_render_scale if GameManager.perf_optimizer != null else 1.0
 	var c: Vector2i = GameManager.current_chunk
-	var line2: String = "CHUNK (%d, %d)   |   %s" % [c.x, c.y, pos_str]
-	var line3: String = "STATIC MEM: %.1f MB   |   PROFILE: %s" % [_cached_ram_mb, GameManager.get_profile_name()]
+	var perf_line1: String = "%d FPS (%.1f ms)  |  MEM: %.1f MB  |  SCALE: %d%%" % [_cached_fps, _cached_frame_ms, _cached_ram_mb, int(roundf(r_scale * 100.0))]
+	var perf_line2: String = "CHUNK (%d, %d) [%d ACT]  |  %s · %s" % [c.x, c.y, GameManager.active_chunk_count, GameManager.get_time_display(), GameManager.get_weather_display()]
 
-	draw_string(_font, panel.position + Vector2(14.0, 22.0), line1, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, COLOR_TEXT)
-	draw_string(_font, panel.position + Vector2(14.0, 42.0), line2, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COLOR_TEXT_DIM)
-	draw_string(_font, panel.position + Vector2(14.0, 62.0), line3, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COLOR_ACCENT)
+	draw_string(_font, panel.position + Vector2(14.0, 108.0), perf_line1, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, COLOR_TEXT)
+	draw_string(_font, panel.position + Vector2(14.0, 123.0), perf_line2, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, COLOR_TEXT_DIM)
 
 
 func _draw_center_reticle() -> void:
