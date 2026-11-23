@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/world/world_bootstrap.gd" id="1_world"]
+[ext_resource type="Script" path="res://scripts/world/chunk_streamer.gd" id="2_chunk"]
+
+[node name="BarmerPrototype" type="Node3D"]
+script = ExtResource("1_world")
+
+[node name="ChunkStreamer" type="Node" parent="."]
+script = ExtResource("2_chunk")
+
+[node name="GeneratedWorld" type="Node3D" parent="."]
+
+[node name="DynamicProps" type="Node3D" parent="."]
