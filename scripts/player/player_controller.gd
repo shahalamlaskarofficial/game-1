@@ -1,7 +1,9 @@
 extends CharacterBody3D
 
 ## Physics-driven third-person character controller with momentum, stamina,
-## crouch clearance detection, procedural stride locomotion, and RigidBody3D push impulses.
+## crouch clearance detection, articulated human locomotion, and RigidBody3D push impulses.
+
+const CharacterMeshBuilderScript = preload("res://scripts/player/character_mesh_builder.gd")
 
 @export_group("Locomotion")
 @export var walk_speed: float = 2.4
@@ -47,14 +49,7 @@ var _coyote_timer: float = 0.0
 var _stamina_delay_timer: float = 0.0
 var _stamina_exhausted: bool = false
 var _capsule_shape: CapsuleShape3D = null
-
-# Procedural proxy limbs (replaced seamlessly by skeletal rig in later phase)
-var _torso_pivot: Node3D = null
-var _left_leg: Node3D = null
-var _right_leg: Node3D = null
-var _left_arm: Node3D = null
-var _right_arm: Node3D = null
-var _stride_cycle: float = 0.0
+var _character_rig: RefCounted = null
 
 
 func _ready() -> void:
@@ -62,7 +57,9 @@ func _ready() -> void:
 	if standing_collider.shape is CapsuleShape3D:
 		_capsule_shape = standing_collider.shape.duplicate() as CapsuleShape3D
 		standing_collider.shape = _capsule_shape
-	_build_character_proxy()
+
+	_character_rig = CharacterMeshBuilderScript.new()
+	_character_rig.build_into(visual_root)
 
 
 func _physics_process(delta: float) -> void:
@@ -72,9 +69,18 @@ func _physics_process(delta: float) -> void:
 	_update_crouch_state(delta)
 	_update_locomotion(delta)
 	_apply_rigidbody_push_impulses()
-	_update_procedural_animation(delta)
 
 	var horiz_speed: float = Vector2(velocity.x, velocity.z).length()
+	if _character_rig != null:
+		_character_rig.update_animation(
+			delta,
+			horiz_speed,
+			sprint_speed,
+			is_on_floor(),
+			is_crouching,
+			velocity.y
+		)
+
 	camera_pivot.update_dynamic_effects(
 		delta,
 		horiz_speed,
@@ -115,7 +121,6 @@ func _update_locomotion(delta: float) -> void:
 	var input_vec: Vector2 = InputRouter.get_move_vector()
 	var input_mag: float = clampf(input_vec.length(), 0.0, 1.0)
 
-	# Transform 2D input relative to camera horizontal yaw
 	var cam_yaw: float = camera_pivot.get_camera_yaw_rad()
 	var forward_dir := Vector3(-sin(cam_yaw), 0.0, -cos(cam_yaw))
 	var right_dir := Vector3(cos(cam_yaw), 0.0, -sin(cam_yaw))
@@ -123,7 +128,6 @@ func _update_locomotion(delta: float) -> void:
 	if move_dir.length_squared() > 0.0001:
 		move_dir = move_dir.normalized()
 
-	# Stamina & sprint evaluation
 	var wants_sprint: bool = InputRouter.is_sprinting() and input_mag > 0.65 and not is_crouching
 	if _stamina_exhausted and stamina > 25.0:
 		_stamina_exhausted = false
@@ -142,7 +146,6 @@ func _update_locomotion(delta: float) -> void:
 		else:
 			stamina = minf(max_stamina, stamina + stamina_regen_rate * delta)
 
-	# Target speed selection (analog stick supports walk -> run -> sprint smoothly)
 	var target_speed: float = 0.0
 	if input_mag > 0.02:
 		if is_crouching:
@@ -167,7 +170,6 @@ func _update_locomotion(delta: float) -> void:
 	velocity.x = new_horiz.x
 	velocity.z = new_horiz.z
 
-	# Jump with coyote time + input buffer
 	if _coyote_timer > 0.0 and InputRouter.consume_jump_if_buffered():
 		if is_crouching:
 			ceiling_check.force_raycast_update()
@@ -180,7 +182,6 @@ func _update_locomotion(delta: float) -> void:
 
 	move_and_slide()
 
-	# Smoothly rotate visual mesh toward travel direction
 	if new_horiz.length_squared() > 0.08:
 		var desired_angle: float = atan2(-new_horiz.x, -new_horiz.z)
 		visual_root.rotation.y = lerp_angle(visual_root.rotation.y, desired_angle, 1.0 - exp(-turn_speed * delta))
@@ -201,110 +202,3 @@ func _apply_rigidbody_push_impulses() -> void:
 			var impulse_mag: float = clampf(player_speed * push_force_multiplier, 0.5, max_push_impulse)
 			var offset: Vector3 = col.get_position() - rb.global_position
 			rb.apply_impulse(push_dir * impulse_mag, offset * 0.45)
-
-
-func _update_procedural_animation(delta: float) -> void:
-	if _torso_pivot == null:
-		return
-
-	var horiz_speed: float = Vector2(velocity.x, velocity.z).length()
-	var crouch_drop: float = -0.34 if is_crouching else 0.0
-	_torso_pivot.position.y = lerpf(_torso_pivot.position.y, 0.92 + crouch_drop, 1.0 - exp(-12.0 * delta))
-
-	if is_on_floor() and horiz_speed > 0.2:
-		var speed_factor: float = clampf(horiz_speed / sprint_speed, 0.15, 1.0)
-		_stride_cycle += delta * lerpf(6.0, 12.5, speed_factor)
-		var swing: float = sin(_stride_cycle) * lerpf(0.28, 0.78, speed_factor)
-		_left_leg.rotation.x = swing
-		_right_leg.rotation.x = -swing
-		_left_arm.rotation.x = -swing * 0.75
-		_right_arm.rotation.x = swing * 0.75
-		_torso_pivot.rotation.x = lerpf(_torso_pivot.rotation.x, -0.14 * speed_factor - (0.18 if is_crouching else 0.0), 1.0 - exp(-10.0 * delta))
-	else:
-		_left_leg.rotation.x = lerpf(_left_leg.rotation.x, 0.0, 1.0 - exp(-10.0 * delta))
-		_right_leg.rotation.x = lerpf(_right_leg.rotation.x, 0.0, 1.0 - exp(-10.0 * delta))
-		_left_arm.rotation.x = lerpf(_left_arm.rotation.x, 0.0, 1.0 - exp(-10.0 * delta))
-		_right_arm.rotation.x = lerpf(_right_arm.rotation.x, 0.0, 1.0 - exp(-10.0 * delta))
-		var idle_lean: float = -0.22 if is_crouching else 0.0
-		_torso_pivot.rotation.x = lerpf(_torso_pivot.rotation.x, idle_lean, 1.0 - exp(-10.0 * delta))
-
-
-func _build_character_proxy() -> void:
-	var jacket_mat := StandardMaterial3D.new()
-	jacket_mat.albedo_color = Color(0.24, 0.27, 0.25)
-	jacket_mat.roughness = 0.82
-
-	var pants_mat := StandardMaterial3D.new()
-	pants_mat.albedo_color = Color(0.36, 0.31, 0.25)
-	pants_mat.roughness = 0.88
-
-	var accent_mat := StandardMaterial3D.new()
-	accent_mat.albedo_color = Color(0.82, 0.56, 0.22)
-	accent_mat.roughness = 0.55
-
-	var skin_mat := StandardMaterial3D.new()
-	skin_mat.albedo_color = Color(0.62, 0.45, 0.34)
-	skin_mat.roughness = 0.72
-
-	_torso_pivot = Node3D.new()
-	_torso_pivot.position = Vector3(0.0, 0.92, 0.0)
-	visual_root.add_child(_torso_pivot)
-
-	# Torso
-	var torso := _make_box(Vector3(0.42, 0.56, 0.24), jacket_mat)
-	torso.position = Vector3(0.0, 0.28, 0.0)
-	_torso_pivot.add_child(torso)
-
-	# Tactical shoulder strap / desert accent
-	var strap := _make_box(Vector3(0.44, 0.08, 0.26), accent_mat)
-	strap.position = Vector3(0.0, 0.14, 0.0)
-	_torso_pivot.add_child(strap)
-
-	# Head
-	var head := MeshInstance3D.new()
-	var head_mesh := CapsuleMesh.new()
-	head_mesh.radius = 0.125
-	head_mesh.height = 0.28
-	head.mesh = head_mesh
-	head.material_override = skin_mat
-	head.position = Vector3(0.0, 0.72, 0.0)
-	_torso_pivot.add_child(head)
-
-	# Arms
-	_left_arm = Node3D.new()
-	_left_arm.position = Vector3(-0.28, 0.50, 0.0)
-	_torso_pivot.add_child(_left_arm)
-	var la_mesh := _make_box(Vector3(0.12, 0.56, 0.12), jacket_mat)
-	la_mesh.position = Vector3(0.0, -0.24, 0.0)
-	_left_arm.add_child(la_mesh)
-
-	_right_arm = Node3D.new()
-	_right_arm.position = Vector3(0.28, 0.50, 0.0)
-	_torso_pivot.add_child(_right_arm)
-	var ra_mesh := _make_box(Vector3(0.12, 0.56, 0.12), jacket_mat)
-	ra_mesh.position = Vector3(0.0, -0.24, 0.0)
-	_right_arm.add_child(ra_mesh)
-
-	# Legs
-	_left_leg = Node3D.new()
-	_left_leg.position = Vector3(-0.12, 0.0, 0.0)
-	_torso_pivot.add_child(_left_leg)
-	var ll_mesh := _make_box(Vector3(0.15, 0.88, 0.16), pants_mat)
-	ll_mesh.position = Vector3(0.0, -0.44, 0.0)
-	_left_leg.add_child(ll_mesh)
-
-	_right_leg = Node3D.new()
-	_right_leg.position = Vector3(0.12, 0.0, 0.0)
-	_torso_pivot.add_child(_right_leg)
-	var rl_mesh := _make_box(Vector3(0.15, 0.88, 0.16), pants_mat)
-	rl_mesh.position = Vector3(0.0, -0.44, 0.0)
-	_right_leg.add_child(rl_mesh)
-
-
-func _make_box(extents: Vector3, mat: Material) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = extents
-	mi.mesh = bm
-	mi.material_override = mat
-	return mi
