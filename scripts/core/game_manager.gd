@@ -1,7 +1,7 @@
 extends Node
 
 ## Central game state, graphics profile orchestrator, streaming telemetry hub,
-## vehicle/traffic registry, performance optimizer host, and development-status tracker.
+## vehicle/traffic/NPC registry, performance optimizer host, and dev-status tracker.
 ## Loaded as Autoload: GameManager
 
 const DevProgressTrackerScript = preload("res://scripts/core/dev_progress_tracker.gd")
@@ -31,15 +31,22 @@ var current_context: ControlContext = ControlContext.ON_FOOT
 var current_chunk: Vector2i = Vector2i.ZERO
 var active_chunk_count: int = 1
 var active_traffic_count: int = 0
+var active_npc_count: int = 0
 
 var player_ref: CharacterBody3D = null
 var current_vehicle: Node3D = null
 var nearby_vehicle: Node3D = null
+var nearby_npc: Node3D = null
 var traffic_manager_ref: Node3D = null
+var npc_manager_ref: Node3D = null
 var world_environment_ref: WorldEnvironment = null
 var sun_light_ref: DirectionalLight3D = null
 var atmosphere_ref: Node3D = null
 var hud_telemetry_visible: bool = true
+
+var npc_dialogue_speaker: String = ""
+var npc_dialogue_text: String = ""
+var npc_dialogue_timer: float = 0.0
 
 var dev_tracker: RefCounted = null
 var perf_optimizer: Node = null
@@ -58,6 +65,11 @@ func _ready() -> void:
 		apply_graphics_profile(GraphicsProfile.HIGH)
 
 
+func _process(delta: float) -> void:
+	if npc_dialogue_timer > 0.0:
+		npc_dialogue_timer = maxf(0.0, npc_dialogue_timer - delta)
+
+
 func register_player(player: CharacterBody3D) -> void:
 	player_ref = player
 
@@ -74,6 +86,16 @@ func register_atmosphere(atmo: Node3D) -> void:
 
 func register_traffic_manager(tm: Node3D) -> void:
 	traffic_manager_ref = tm
+
+
+func register_npc_manager(nm: Node3D) -> void:
+	npc_manager_ref = nm
+
+
+func show_npc_dialogue(speaker: String, line: String, duration: float = 3.8) -> void:
+	npc_dialogue_speaker = speaker
+	npc_dialogue_text = line
+	npc_dialogue_timer = duration
 
 
 func set_current_chunk(chunk_coords: Vector2i) -> void:
