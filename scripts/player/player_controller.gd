@@ -2,7 +2,7 @@ extends CharacterBody3D
 
 ## Physics-driven third-person character controller with momentum, stamina,
 ## crouch clearance detection, articulated human locomotion, RigidBody3D push impulses,
-## and seamless Enter/Exit Vehicle handoff.
+## Vehicle Enter/Exit handoff, and contextual Barmer NPC greeting interaction.
 
 const CharacterMeshBuilderScript = preload("res://scripts/player/character_mesh_builder.gd")
 const VehicleControllerScript = preload("res://scripts/vehicles/vehicle_controller.gd")
@@ -58,8 +58,8 @@ var _nearby_scan_timer: float = 0.0
 
 func _ready() -> void:
 	GameManager.register_player(self)
-	# Collide physically with World_Static (1) + Physics_Props (4) + Vehicles (8)
-	collision_mask = 13
+	# Collide physically with World_Static (1) + Physics_Props (4) + Vehicles (8) + NPCs (16) = 29
+	collision_mask = 29
 
 	if standing_collider.shape is CapsuleShape3D:
 		_capsule_shape = standing_collider.shape.duplicate() as CapsuleShape3D
@@ -77,10 +77,13 @@ func _physics_process(delta: float) -> void:
 	if GameManager.current_context != GameManager.ControlContext.ON_FOOT:
 		return
 
-	_scan_nearby_vehicle(delta)
-	if InputRouter.consume_interact_if_buffered() and GameManager.nearby_vehicle != null:
-		_enter_vehicle(GameManager.nearby_vehicle)
-		return
+	_scan_nearby_interactables(delta)
+	if InputRouter.consume_interact_if_buffered():
+		if GameManager.nearby_vehicle != null:
+			_enter_vehicle(GameManager.nearby_vehicle)
+			return
+		elif GameManager.nearby_npc != null and is_instance_valid(GameManager.nearby_npc):
+			GameManager.nearby_npc.call("on_player_greeted", global_position)
 
 	_update_crouch_state(delta)
 	_update_locomotion(delta)
@@ -107,15 +110,21 @@ func _physics_process(delta: float) -> void:
 	)
 
 
-func _scan_nearby_vehicle(delta: float) -> void:
+func _scan_nearby_interactables(delta: float) -> void:
 	_nearby_scan_timer -= delta
 	if _nearby_scan_timer > 0.0:
 		return
 	_nearby_scan_timer = 0.14
+
 	if GameManager.traffic_manager_ref != null and GameManager.traffic_manager_ref.has_method("get_nearest_enterable_vehicle"):
 		GameManager.nearby_vehicle = GameManager.traffic_manager_ref.get_nearest_enterable_vehicle(global_position, 4.6)
 	else:
 		GameManager.nearby_vehicle = null
+
+	if GameManager.nearby_vehicle == null and GameManager.npc_manager_ref != null and GameManager.npc_manager_ref.has_method("get_nearest_interactable_npc"):
+		GameManager.nearby_npc = GameManager.npc_manager_ref.get_nearest_interactable_npc(global_position, 3.2)
+	else:
+		GameManager.nearby_npc = null
 
 
 func _enter_vehicle(veh: Node3D) -> void:
@@ -126,9 +135,9 @@ func _enter_vehicle(veh: Node3D) -> void:
 
 	GameManager.current_vehicle = veh
 	GameManager.nearby_vehicle = null
+	GameManager.nearby_npc = null
 	veh.call("set_control_mode", VehicleControllerScript.ControlMode.PLAYER)
 
-	# Hide player rig & disable collider while seated inside vehicle
 	standing_collider.disabled = true
 	visual_root.visible = false
 	velocity = Vector3.ZERO
@@ -149,7 +158,6 @@ func _update_vehicle_passenger_state(delta: float) -> void:
 		_exit_vehicle()
 		return
 
-	# Keep Player node synced to vehicle so ChunkStreamer, ReflectionProbe & Weather follow seamlessly
 	global_position = veh.global_position
 	camera_pivot.position.y = lerpf(camera_pivot.position.y, VEHICLE_CAM_Y, 1.0 - exp(-10.0 * delta))
 
