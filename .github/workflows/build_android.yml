@@ -5,10 +5,13 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   GODOT_VERSION: "4.3"
   GODOT_RELEASE: "stable"
-  APK_OUTPUT: "build/android/barmer-openworld-phase1.apk"
+  APK_OUTPUT: "build/android/ProjectBarmer-Android.apk"
 
 jobs:
   build-android:
@@ -85,9 +88,17 @@ jobs:
           ls -lh "${APK_OUTPUT}"
           test -s "${APK_OUTPUT}"
 
-      - name: Upload Android APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: barmer-openworld-phase1-apk
-          path: ${{ env.APK_OUTPUT }}
-          retention-days: 14
+      - name: Publish APK to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${APK_OUTPUT}" --clobber
+          else
+            gh release create "$TAG" "${APK_OUTPUT}" \
+              --title "Project Barmer — Build #${{ github.run_number }}" \
+              --notes "Automated Android (arm64-v8a) APK build from commit \`${SHORT_SHA}\`." \
+              --latest
+          fi
