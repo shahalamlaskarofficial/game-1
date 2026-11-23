@@ -1,0 +1,93 @@
+name: Build Android APK (Godot 4.3)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.3"
+  GODOT_RELEASE: "stable"
+  APK_OUTPUT: "build/android/barmer-openworld-phase1.apk"
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache Godot 4.3 binary and export templates
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/godot-cache
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-${{ env.GODOT_RELEASE }}-linux-v1
+
+      - name: Download Godot 4.3 and Export Templates
+        if: steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /tmp/godot-cache ~/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_RELEASE}
+          wget -q "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-${GODOT_RELEASE}/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_linux.x86_64.zip" -O /tmp/godot.zip
+          unzip -q /tmp/godot.zip -d /tmp/godot-cache
+          chmod +x /tmp/godot-cache/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_linux.x86_64
+          rm /tmp/godot.zip
+
+          wget -q "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-${GODOT_RELEASE}/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_export_templates.tpz" -O /tmp/templates.tpz
+          unzip -q /tmp/templates.tpz -d /tmp/templates_extract
+          mv /tmp/templates_extract/templates/* ~/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_RELEASE}/
+          rm -rf /tmp/templates.tpz /tmp/templates_extract
+
+      - name: Configure Android SDK, Debug Keystore, and Godot Editor Settings
+        run: |
+          JAVA_DIR="${JAVA_HOME_17_X64:-$JAVA_HOME}"
+          SDK_DIR="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "Using JAVA_DIR=${JAVA_DIR}"
+          echo "Using SDK_DIR=${SDK_DIR}"
+
+          mkdir -p ~/.android ~/.config/godot build/android
+
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkey -v \
+              -keystore ~/.android/debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=ProjectBarmer,C=IN"
+          fi
+
+          cat <<EOF > ~/.config/godot/editor_settings-4.3.tres
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/java_sdk_path = "${JAVA_DIR}"
+          export/android/android_sdk_path = "${SDK_DIR}"
+          export/android/debug_keystore = "${HOME}/.android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          EOF
+
+      - name: Import Project Resources & Validate Scripts
+        run: |
+          GODOT_BIN="/tmp/godot-cache/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_linux.x86_64"
+          "$GODOT_BIN" --headless --path . --import
+
+      - name: Export Signed Debug APK
+        run: |
+          GODOT_BIN="/tmp/godot-cache/Godot_v${GODOT_VERSION}-${GODOT_RELEASE}_linux.x86_64"
+          "$GODOT_BIN" --headless --path . --export-debug "Android" "${APK_OUTPUT}"
+          ls -lh "${APK_OUTPUT}"
+          test -s "${APK_OUTPUT}"
+
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: barmer-openworld-phase1-apk
+          path: ${{ env.APK_OUTPUT }}
+          retention-days: 14
