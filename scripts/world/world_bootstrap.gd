@@ -1,12 +1,13 @@
 extends Node3D
 
-## Phase 3 Barmer World Bootstrap.
-## Initializes RAM-optimized PBR textures, AtmosphereManager (24h cycle + weather + reflections),
-## real Barmer 256m chunk streaming, Phase 1 interactive physics props, and district banners.
+## Phase 4 Barmer World Bootstrap.
+## Initializes RAM-optimized PBR textures, AtmosphereManager, real Barmer 256m chunk
+## streaming, TrafficManager (starter vehicles + LHT AI traffic), and physics props.
 
 const BarmerMapDataScript = preload("res://scripts/world/barmer_map_data.gd")
 const MaterialLibraryScript = preload("res://scripts/world/material_library.gd")
 const AtmosphereManagerScript = preload("res://scripts/world/atmosphere_manager.gd")
+const TrafficManagerScript = preload("res://scripts/vehicles/traffic_manager.gd")
 
 @onready var chunk_streamer: Node = $ChunkStreamer
 @onready var generated_world: Node3D = $GeneratedWorld
@@ -15,6 +16,7 @@ const AtmosphereManagerScript = preload("res://scripts/world/atmosphere_manager.
 var map_data: RefCounted = null
 var material_lib: RefCounted = null
 var atmosphere: Node3D = null
+var traffic_manager: Node3D = null
 
 var _banner_control: Control = null
 var _banner_text: String = ""
@@ -37,6 +39,15 @@ func _ready() -> void:
 	GameManager.active_chunk_count = chunk_streamer.loaded_chunks.size()
 
 	_spawn_phase1_physics_props()
+	_setup_traffic_system()
+
+
+func _setup_traffic_system() -> void:
+	traffic_manager = Node3D.new()
+	traffic_manager.name = "TrafficManager"
+	traffic_manager.set_script(TrafficManagerScript)
+	add_child(traffic_manager)
+	traffic_manager.initialize(map_data, chunk_streamer)
 
 
 func _process(delta: float) -> void:
@@ -143,7 +154,7 @@ func _spawn_rigid_crate(node_name: String, pos: Vector3, box_size: Vector3, mass
 	rb.position = pos
 	rb.mass = mass_kg
 	rb.collision_layer = 4
-	rb.collision_mask = 7
+	rb.collision_mask = 15 # Collides with World + Player + Props + Vehicles
 
 	var phys := PhysicsMaterial.new()
 	phys.friction = 0.72
@@ -172,7 +183,7 @@ func _spawn_rigid_drum(node_name: String, pos: Vector3, radius: float, height: f
 	rb.position = pos
 	rb.mass = mass_kg
 	rb.collision_layer = 4
-	rb.collision_mask = 7
+	rb.collision_mask = 15
 
 	var phys := PhysicsMaterial.new()
 	phys.friction = 0.62
