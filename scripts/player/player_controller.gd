@@ -1,9 +1,11 @@
 extends CharacterBody3D
 
 ## Physics-driven third-person character controller with momentum, stamina,
-## crouch clearance detection, articulated human locomotion, and RigidBody3D push impulses.
+## crouch clearance detection, articulated human locomotion, RigidBody3D push impulses,
+## and seamless Enter/Exit Vehicle handoff.
 
 const CharacterMeshBuilderScript = preload("res://scripts/player/character_mesh_builder.gd")
+const VehicleControllerScript = preload("res://scripts/vehicles/vehicle_controller.gd")
 
 @export_group("Locomotion")
 @export var walk_speed: float = 2.4
@@ -34,6 +36,7 @@ const STAND_HEIGHT: float = 1.80
 const CROUCH_HEIGHT: float = 1.15
 const STAND_CAM_Y: float = 1.50
 const CROUCH_CAM_Y: float = 0.96
+const VEHICLE_CAM_Y: float = 1.85
 
 @onready var standing_collider: CollisionShape3D = $StandingCollider
 @onready var visual_root: Node3D = $VisualRoot
@@ -50,10 +53,14 @@ var _stamina_delay_timer: float = 0.0
 var _stamina_exhausted: bool = false
 var _capsule_shape: CapsuleShape3D = null
 var _character_rig: RefCounted = null
+var _nearby_scan_timer: float = 0.0
 
 
 func _ready() -> void:
 	GameManager.register_player(self)
+	# Collide physically with World_Static (1) + Physics_Props (4) + Vehicles (8)
+	collision_mask = 13
+
 	if standing_collider.shape is CapsuleShape3D:
 		_capsule_shape = standing_collider.shape.duplicate() as CapsuleShape3D
 		standing_collider.shape = _capsule_shape
@@ -63,7 +70,16 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if GameManager.current_context == GameManager.ControlContext.VEHICLE:
+		_update_vehicle_passenger_state(delta)
+		return
+
 	if GameManager.current_context != GameManager.ControlContext.ON_FOOT:
+		return
+
+	_scan_nearby_vehicle(delta)
+	if InputRouter.consume_interact_if_buffered() and GameManager.nearby_vehicle != null:
+		_enter_vehicle(GameManager.nearby_vehicle)
 		return
 
 	_update_crouch_state(delta)
@@ -89,6 +105,80 @@ func _physics_process(delta: float) -> void:
 		is_crouching,
 		is_sprinting_active
 	)
+
+
+func _scan_nearby_vehicle(delta: float) -> void:
+	_nearby_scan_timer -= delta
+	if _nearby_scan_timer > 0.0:
+		return
+	_nearby_scan_timer = 0.14
+	if GameManager.traffic_manager_ref != null and GameManager.traffic_manager_ref.has_method("get_nearest_enterable_vehicle"):
+		GameManager.nearby_vehicle = GameManager.traffic_manager_ref.get_nearest_enterable_vehicle(global_position, 4.6)
+	else:
+		GameManager.nearby_vehicle = null
+
+
+func _enter_vehicle(veh: Node3D) -> void:
+	if not is_instance_valid(veh):
+		return
+	if GameManager.traffic_manager_ref != null and GameManager.traffic_manager_ref.has_method("notify_vehicle_taken_by_player"):
+		GameManager.traffic_manager_ref.notify_vehicle_taken_by_player(veh)
+
+	GameManager.current_vehicle = veh
+	GameManager.nearby_vehicle = null
+	veh.call("set_control_mode", VehicleControllerScript.ControlMode.PLAYER)
+
+	# Hide player rig & disable collider while seated inside vehicle
+	standing_collider.disabled = true
+	visual_root.visible = false
+	velocity = Vector3.ZERO
+	InputRouter.set_crouch(false)
+	is_crouching = false
+	InputRouter.reset_touch_controls()
+
+	if veh is CollisionObject3D:
+		camera_pivot.attach_vehicle(veh as CollisionObject3D)
+	camera_pivot.position.y = VEHICLE_CAM_Y
+
+	GameManager.set_control_context(GameManager.ControlContext.VEHICLE)
+
+
+func _update_vehicle_passenger_state(delta: float) -> void:
+	var veh: Node3D = GameManager.current_vehicle
+	if veh == null or not is_instance_valid(veh):
+		_exit_vehicle()
+		return
+
+	# Keep Player node synced to vehicle so ChunkStreamer, ReflectionProbe & Weather follow seamlessly
+	global_position = veh.global_position
+	camera_pivot.position.y = lerpf(camera_pivot.position.y, VEHICLE_CAM_Y, 1.0 - exp(-10.0 * delta))
+
+	var kmh: float = float(veh.get("speed_kmh"))
+	var fwd_mps: float = float(veh.get("forward_speed_mps"))
+	camera_pivot.update_vehicle_chase(delta, veh, kmh, fwd_mps)
+
+	if InputRouter.consume_interact_if_buffered():
+		_exit_vehicle()
+
+
+func _exit_vehicle() -> void:
+	var veh: Node3D = GameManager.current_vehicle
+	GameManager.current_vehicle = null
+	camera_pivot.detach_vehicle()
+
+	if veh != null and is_instance_valid(veh):
+		veh.call("set_control_mode", VehicleControllerScript.ControlMode.PARKED)
+		var exit_pos: Vector3 = veh.call("get_exit_spawn_position", get_world_3d().direct_space_state)
+		global_position = exit_pos
+		if veh is RigidBody3D:
+			velocity = (veh as RigidBody3D).linear_velocity * 0.35
+			velocity.y = 0.0
+
+	standing_collider.disabled = false
+	visual_root.visible = true
+	camera_pivot.position.y = STAND_CAM_Y
+	InputRouter.reset_touch_controls()
+	GameManager.set_control_context(GameManager.ControlContext.ON_FOOT)
 
 
 func _update_crouch_state(delta: float) -> void:
@@ -191,7 +281,7 @@ func _apply_rigidbody_push_impulses() -> void:
 	for i: int in range(get_slide_collision_count()):
 		var col: KinematicCollision3D = get_slide_collision(i)
 		var body: Object = col.get_collider()
-		if body is RigidBody3D:
+		if body is RigidBody3D and not (body is VehicleBody3D):
 			var rb := body as RigidBody3D
 			var push_dir: Vector3 = -col.get_normal()
 			push_dir.y = 0.0
